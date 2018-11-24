@@ -10,6 +10,7 @@ This code is a Theano implementation of EMNLP18 paper [Prediction Improves Simul
 - The data should be tokenized and Byte Pair Encoded.
 
 # Pretraining
+The first step of training the model starts with pretraining Environment. The parameters of the uni-directional LSTM can be changed using the function 'pretrain_config()' in 'config.py'. 
 
 # Training the Agent
 
