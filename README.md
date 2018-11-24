@@ -5,5 +5,12 @@ This code is a Theano implementation of EMNLP18 paper [Prediction Improves Simul
 
 # Dataset
 
-- We have used WMT'16 corpora as our dataset for pretraining and training our model parameters.
-- All datasets can be found in the directory " **/cs/natlang-expts/aalineja/dl4mt-simul-trans/data** " on SFU server.
+- We have used WMT'15 corpora as our dataset for pretraining and training our agent parameters.
+- Newstest 2013 for validation and testset.
+- The data should be tokenized and Byte Pair Encoded.
+
+# Pretraining
+
+# Training the Agent
+
+
