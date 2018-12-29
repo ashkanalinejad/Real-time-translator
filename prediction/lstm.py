@@ -2,7 +2,7 @@
 Build a tweet sentiment analyzer
 '''
 from collections import OrderedDict
-import pickle as pkl
+import cPickle as pkl
 import sys
 import time
 
@@ -11,18 +11,20 @@ import theano
 from theano import config
 import theano.tensor as tensor
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
-from .utils.data_iterator import TextIterator, WindowIterator
+from utils.data_iterator import TextIterator, WindowIterator
+
+import imdb
 
 #datasets = {'imdb': (imdb.load_data, imdb.prepare_data)}
-datasets = [ '/Users/alinejad/Desktop/SFU/SNMT-Prediction/Datasets/wmt16_en_de/newstest2015.tok.bpe.32000.de',
-             '/Users/alinejad/Desktop/SFU/SNMT-Prediction/Datasets/wmt16_en_de/predictnewstest.tok.bpe.32000.en']
+datasets = [ '/Users/alinejad/Desktop/X/Real-time-translator/data/newstest2011.de.tok.bpe',
+             '/Users/alinejad/Desktop/X/Real-time-translator/data/predictnewstest.tok.bpe.32000.de']
 # dictionaries = ['/Users/alinejad/Desktop/SFU/SNMT-Prediction/dl4mt-simul-trans/data/all_de-en.en.tok.bpe.pkl']
-dictionaries = ['/Users/alinejad/Desktop/SFU/SNMT-Prediction/dl4mt-simul-trans/data/all_de-en.en.tok.bpe.pkl']
+dictionaries = ['/Users/alinejad/Desktop/X/Real-time-translator/data/all_de-en.de.tok.bpe.pkl']
 
-valid_data = ['/Users/alinejad/Desktop/SFU/SNMT-Prediction/Datasets/wmt16_en_de/newstest2012.tok.bpe.32000.en',
-               '/Users/alinejad/Desktop/SFU/SNMT-Prediction/Datasets/wmt16_en_de/predictnewstest1.tok.bpe.32000.en']
+valid_data = ['/Users/alinejad/Desktop/X/Real-time-translator/data/newstest2011.de.tok.bpe',
+              '/Users/alinejad/Desktop/X/Real-time-translator/data/predictnewstest1.tok.bpe.32000.de']
 
-print(datasets)
+print datasets
 # Set the random number generators' seeds for consistency
 SEED = 123
 #numpy.random.seed(SEED)
@@ -52,7 +54,7 @@ def get_minibatches_idx(n, minibatch_size, shuffle=False):
         # Make a minibatch out of what is left
         minibatches.append(idx_list[minibatch_start:])
 
-    return list(zip(list(range(len(minibatches))), minibatches))
+    return zip(range(len(minibatches)), minibatches)
 
 
 def get_dataset(name):
@@ -63,7 +65,7 @@ def zipp(params, tparams):
     """
     When we reload the model. Needed for the GPU stuff.
     """
-    for kk, vv in params.items():
+    for kk, vv in params.iteritems():
         tparams[kk].set_value(vv)
 
 
@@ -72,7 +74,7 @@ def unzip(zipped):
     When we pickle the model. Needed for the GPU stuff.
     """
     new_params = OrderedDict()
-    for kk, vv in zipped.items():
+    for kk, vv in zipped.iteritems():
         new_params[kk] = vv.get_value()
     return new_params
 
@@ -104,8 +106,8 @@ def init_params(options):
                                               params,
                                               prefix='encoder')
     params = get_layer(options['encoder'])[0](options,
-                                              params,
-                                              prefix='decoder')
+    	                                      params,
+    	                                      prefix='decoder')
     # classifier
     params['U'] = 0.01 * numpy.random.randn(options['dim_proj'],
                                             options['ydim']).astype(config.floatX)
@@ -116,7 +118,7 @@ def init_params(options):
 
 def load_params(path, params):
     pp = numpy.load(path)
-    for kk, vv in params.items():
+    for kk, vv in params.iteritems():
         if kk not in pp:
             raise Warning('%s is not in the archive' % kk)
         params[kk] = pp[kk]
@@ -126,7 +128,7 @@ def load_params(path, params):
 
 def init_tparams(params):
     tparams = OrderedDict()
-    for kk, pp in params.items():
+    for kk, pp in params.iteritems():
         tparams[kk] = theano.shared(params[kk], name=kk)
     return tparams
 
@@ -171,7 +173,10 @@ def lstm_layer(tparams, state_below, options, prefix='lstm', mask=None):
     else:
         n_samples = 1
 
-    assert mask is not None
+    #    assert mask is not None
+
+    if mask is None:
+        mask = tensor.alloc(1., state_below.shape[0], 1)
 
     def _slice(_x, n, dim):
         if _x.ndim == 3:
@@ -227,7 +232,7 @@ def sgd(lr, tparams, grads, x, mask, y, cost):
     # New set of shared variable that will contain the gradient
     # for a mini-batch.
     gshared = [theano.shared(p.get_value() * 0., name='%s_grad' % k)
-               for k, p in tparams.items()]
+               for k, p in tparams.iteritems()]
     gsup = [(gs, g) for gs, g in zip(gshared, grads)]
 
     # Function that computes gradients for a mini-batch, but do not
@@ -235,7 +240,7 @@ def sgd(lr, tparams, grads, x, mask, y, cost):
     f_grad_shared = theano.function([x, mask, y], cost, updates=gsup,
                                     name='sgd_f_grad_shared')
 
-    pup = [(p, p - lr * g) for p, g in zip(list(tparams.values()), gshared)]
+    pup = [(p, p - lr * g) for p, g in zip(tparams.values(), gshared)]
 
     # Function that updates the weights from the previously computed
     # gradient.
@@ -248,7 +253,7 @@ def sgd(lr, tparams, grads, x, mask, y, cost):
 def adam(lr, tparams, grads, x, mask, y, y_mask, cost):
     gshared = [theano.shared(p.get_value() * 0.,
                              name='%s_grad' % k)
-               for k, p in list(tparams.items())]
+               for k, p in tparams.items()]
     gsup = [(gs, g) for gs, g in zip(gshared, grads)]
 
     f_grad_shared = theano.function([x, mask, y, y_mask], cost, updates=gsup, name='adam_f_grad_shared', on_unused_input='ignore')
@@ -316,13 +321,13 @@ def adadelta(lr, tparams, grads, x, mask, y, y_mask, cost):
 
     zipped_grads = [theano.shared(p.get_value() * numpy_floatX(0.),
                                   name='%s_grad' % k)
-                    for k, p in tparams.items()]
+                    for k, p in tparams.iteritems()]
     running_up2 = [theano.shared(p.get_value() * numpy_floatX(0.),
                                  name='%s_rup2' % k)
-                   for k, p in tparams.items()]
+                   for k, p in tparams.iteritems()]
     running_grads2 = [theano.shared(p.get_value() * numpy_floatX(0.),
                                     name='%s_rgrad2' % k)
-                      for k, p in tparams.items()]
+                      for k, p in tparams.iteritems()]
 
     zgup = [(zg, g) for zg, g in zip(zipped_grads, grads)]
     rg2up = [(rg2, 0.95 * rg2 + 0.05 * (g ** 2))
@@ -337,7 +342,7 @@ def adadelta(lr, tparams, grads, x, mask, y, y_mask, cost):
                                      running_grads2)]
     ru2up = [(ru2, 0.95 * ru2 + 0.05 * (ud ** 2))
              for ru2, ud in zip(running_up2, updir)]
-    param_up = [(p, p + ud) for p, ud in zip(list(tparams.values()), updir)]
+    param_up = [(p, p + ud) for p, ud in zip(tparams.values(), updir)]
 
     f_update = theano.function([lr], [], updates=ru2up + param_up,
                                on_unused_input='ignore',
@@ -379,13 +384,13 @@ def rmsprop(lr, tparams, grads, x, mask, y, cost):
 
     zipped_grads = [theano.shared(p.get_value() * numpy_floatX(0.),
                                   name='%s_grad' % k)
-                    for k, p in tparams.items()]
+                    for k, p in tparams.iteritems()]
     running_grads = [theano.shared(p.get_value() * numpy_floatX(0.),
                                    name='%s_rgrad' % k)
-                     for k, p in tparams.items()]
+                     for k, p in tparams.iteritems()]
     running_grads2 = [theano.shared(p.get_value() * numpy_floatX(0.),
                                     name='%s_rgrad2' % k)
-                      for k, p in tparams.items()]
+                      for k, p in tparams.iteritems()]
 
     zgup = [(zg, g) for zg, g in zip(zipped_grads, grads)]
     rgup = [(rg, 0.95 * rg + 0.05 * g) for rg, g in zip(running_grads, grads)]
@@ -398,12 +403,12 @@ def rmsprop(lr, tparams, grads, x, mask, y, cost):
 
     updir = [theano.shared(p.get_value() * numpy_floatX(0.),
                            name='%s_updir' % k)
-             for k, p in tparams.items()]
+             for k, p in tparams.iteritems()]
     updir_new = [(ud, 0.9 * ud - 1e-4 * zg / tensor.sqrt(rg2 - rg ** 2 + 1e-4))
                  for ud, zg, rg, rg2 in zip(updir, zipped_grads, running_grads,
                                             running_grads2)]
     param_up = [(p, p + udn[1])
-                for p, udn in zip(list(tparams.values()), updir_new)]
+                for p, udn in zip(tparams.values(), updir_new)]
     f_update = theano.function([lr], [], updates=updir_new + param_up,
                                on_unused_input='ignore',
                                name='rmsprop_f_update')
@@ -425,7 +430,6 @@ def build_model(tparams, options):
 
     n_timesteps = x.shape[0]
     n_samples = x.shape[1]
-    options['dim_proj'] = 1024
 
     emb = tparams['Wemb'][x.flatten()].reshape([n_timesteps,
                                                 n_samples,
@@ -439,8 +443,8 @@ def build_model(tparams, options):
         proj = dropout_layer(proj, use_noise, trng)
 
     proj_dec = get_layer(options['encoder'])[1](tparams, proj, options,
-                                                prefix='decoder',
-                                                mask=mask)
+    											prefix='decoder',
+    											mask=mask)
     #proj_dec = proj_dec.reshape([n_samples, options['dim_proj']])
 
     if options['encoder'] == 'lstm':
@@ -477,45 +481,51 @@ def pred_probs(f_pred_prob, prepare_data, data, iterator, verbose=False):
         x, mask, y = prepare_data([data[0][t] for t in valid_index],
                                   numpy.array(data[1])[valid_index],
                                   maxlen=None)
-        pred_probs = f_pred_prob(x, mask)
+        pred_probs = f_pred_prob(x, mask, mask2)
         probs[valid_index, :] = pred_probs
 
         n_done += len(valid_index)
         if verbose:
-            print('%d/%d samples classified' % (n_done, n_samples))
+            print '%d/%d samples classified' % (n_done, n_samples)
 
     return probs
 
 
-def pred_error(f_pred, prepare_data, options, iterator, verbose=False):
-    """
-    Just compute the error
-    f_pred: Theano fct computing the prediction
-    prepare_data: usual prepare_data for that dataset.
-    """
+def perplexity(n_samples, probs):
+    off = 1e-8
+    probs = [x+off for x in probs]
+    return numpy.exp(-1*numpy.mean(numpy.log(probs)))
+
+
+def pred_error(f_pred, f_pred_prob, prepare_data, options, iterator, verbose=False):
     num_windows = 0
     correct = []
     valid_err = 0
     predictions = []
-    for x, y in iterator:
-        for xi in x:
+    probabilities = []
+    iteration = 0
+    for xit, yit in iterator:
+        for xi in xit:
+            iteration += 1
             trainwindow = WindowIterator(xi, 3, batch_size=options['batch_size'])
             for w, label in trainwindow:
                 x, mask, y, y_mask = prepare_data(w, label,
                                                     n_words_src=options['n_words'],
                                                     n_words=options['n_words'])
+                if x.shape[0]==0:
+                	continue
                 num_windows +=64
                 preds = f_pred(x, mask)
+                pred_probs = f_pred_prob(x, mask)
+                probabilities += pred_probs[numpy.arange(x.shape[1]), y[0]].tolist()
                 targets = y[0]
-                #print "preds : ", preds
-                #print "targe : ", targets
                 valid_err += (preds == targets).sum()
                 if (preds == targets).any():
                     correct.append(targets)
                     predictions.append(preds)
-    #valid_err = 1. - (numpy_floatX(valid_err) / total)
+    perp = perplexity(num_windows, probabilities)
 
-    return valid_err, correct, predictions, num_windows
+    return valid_err, correct, predictions, num_windows, perp
 
 
 def prepare_data(seqs_x,
@@ -523,7 +533,6 @@ def prepare_data(seqs_x,
                  maxlen=None,
                  n_words_src=30000,
                  n_words=30000):
-
     # x: a list of sentences
     lengths_x = [len(s) for s in seqs_x]
     #print "len x: ", lengths_x
@@ -550,8 +559,8 @@ def prepare_data(seqs_x,
             return None, None, None, None
 
     n_samples = len(seqs_x)
-    maxlen_x  = numpy.max(lengths_x)+1
-    maxlen_y  = numpy.max(lengths_y)+1
+    maxlen_x  = numpy.max(lengths_x)
+    maxlen_y  = numpy.max(lengths_y)
 
     x      = numpy.zeros((maxlen_x, n_samples)).astype('int64')
     y      = numpy.zeros((maxlen_y, n_samples)).astype('int64')
@@ -559,26 +568,26 @@ def prepare_data(seqs_x,
     y_mask = numpy.zeros((maxlen_y, n_samples)).astype('float32')
     for idx, [s_x, s_y] in enumerate(zip(seqs_x, seqs_y)):
         x[:lengths_x[idx], idx] = s_x
-        x_mask[:lengths_x[idx]+1, idx] = 1.
+        x_mask[:lengths_x[idx], idx] = 1.
         y[:lengths_y[idx], idx] = s_y
-        y_mask[:lengths_y[idx]+1, idx] = 1.
+        y_mask[:lengths_y[idx], idx] = 1.
 
     return x, x_mask, y, y_mask
 
 
 def train_lstm(
-    dim_proj=256,  # word embeding dimension and LSTM number of hidden units.
+    dim_proj=1024,  # word embeding dimension and LSTM number of hidden units.
     patience=10,  # Number of epoch to wait before early stop if no progress
     max_epochs=5000,  # The maximum number of epoch to run
     dispFreq=10,  # Display to stdout the training progress every N updates
     decay_c=0.,  # Weight decay for the classifier applied to the U weights.
-    lrate=0.002,  # Learning rate for sgd (not used for adadelta and rmsprop)
+    lrate=0.00002,  # Learning rate for sgd (not used for adadelta and rmsprop)
     n_words=20000,  # Vocabulary size
     optimizer=adam,  # sgd, adadelta and rmsprop available, sgd very hard to use, not recommanded (probably need momentum and decaying learning rate).
     encoder='lstm',  # TODO: can be removed must be lstm.
-    saveto='lstm_model.npz',  # The best model will be saved there
-    validFreq=1000,  # Compute the validation error after this number of update.
-    saveFreq=1000,  # Save the parameters after every saveFreq updates
+    saveto='lstm_model_wmt_de_00002.npz',  # The best model will be saved there
+    validFreq=2000,  # Compute the validation error after this number of update.
+    saveFreq=2000,  # Save the parameters after every saveFreq updates
     maxlen=100,  # Sequence longer then this get ignored
     batch_size=64,  # The batch size during training.
     valid_batch_size=64,  # The batch size used for validation/test set.
@@ -588,7 +597,7 @@ def train_lstm(
     noise_std=0.,
     use_dropout=True,  # if False slightly faster, but worst test error
                        # This frequently need a bigger model.
-    reload_model=None,  # Path to a saved model we want to start from.
+    reload_model=False,  # Path to a saved model we want to start from.
     test_size=-1,  # If >0, we keep only this number of test example.
 ):
 
@@ -601,26 +610,12 @@ def train_lstm(
         with open(dd, 'rb') as f:
             worddicts[ii] = pkl.load(f)
         worddicts_r[ii] = dict()
-        for kk, vv in list(worddicts[ii].items()):
+        for kk, vv in worddicts[ii].items():
             worddicts_r[ii][vv] = kk
 
-    #print worddicts_r
+    print "model options", model_options
 
-    print("model options", model_options)
-
-    #load_data, prepare_data = get_dataset(dataset)
-
-    #print 'Loading data'
-    #train, valid, test = load_data(n_words=n_words, valid_portion=0.05,
-    #                               maxlen=maxlen)
-    #if test_size > 0:
-        # The test set is sorted by size, but we want to keep random
-        # size example.  So we must select a random selection of the
-        # examples.
-    #    idx = numpy.arange(len(test[0]))
-    #    numpy.random.shuffle(idx)
-    #    idx = idx[:test_size]
-    #    test = ([test[0][n] for n in idx], [test[1][n] for n in idx])
+    ResFile = saveto + '.txt'
 
     ydim = 20000
     model_options['ydim'] = ydim
@@ -637,7 +632,7 @@ def train_lstm(
                          batch_size=batch_size,
                          maxlen=maxlen)
 
-    print('Building model')
+    print 'Building model'
     # This create the initial parameters as numpy ndarrays.
     # Dict name (string) -> numpy ndarray
     params = init_params(model_options)
@@ -649,7 +644,7 @@ def train_lstm(
     # Dict name (string) -> Theano Tensor Shared Variable
     # params and tparams have different copy of the weights.
     tparams = init_tparams(params)
-    print(params)
+    #print params
 
 
     # use_noise is for dropout
@@ -668,21 +663,14 @@ def train_lstm(
     cost = log_probs.mean()
     f_cost = theano.function([x, mask, y, y_mask], cost, name='f_cost', on_unused_input='ignore')
 
-    grads = tensor.grad(cost, wrt=list(tparams.values()))
+    grads = tensor.grad(cost, wrt=tparams.values())
     f_grad = theano.function([x, mask, y, y_mask], grads, name='f_grad', on_unused_input='ignore')
 
     lr = tensor.scalar(name='lr')
     f_grad_shared, f_update = optimizer(lr, tparams, grads,
                                         x, mask, y, y_mask, cost)
 
-    print('Optimization')
-
-    #kf_valid = get_minibatches_idx(len(valid[0]), valid_batch_size)
-    #kf_test = get_minibatches_idx(len(test[0]), valid_batch_size)
-
-    #print "%d train examples" % len(train[0])
-    #print "%d valid examples" % len(valid[0])
-    #print "%d test examples" % len(test[0])
+    print 'Optimization'
 
     history_errs = []
     best_p = None
@@ -697,7 +685,7 @@ def train_lstm(
     estop = False  # early stop
     start_time = time.time()
     try:
-        for eidx in range(max_epochs):
+        for eidx in xrange(max_epochs):
             n_samples = 0
 
             # Get new shuffled index for the training set.
@@ -711,26 +699,22 @@ def train_lstm(
                         use_noise.set_value(1.)
 
                         x, mask, y, y_mask = prepare_data(w, label)
+                        if x.shape[0] == 0:
+                        	continue
                         n_samples += x.shape[1]
 
-                        # print f_u_shape(x, mask, y, y_mask)
-
-                        #a = f_log_probs(x, mask, y, y_mask)
-                        #print "log probs are : ", a
-
                         cost = f_grad_shared(x, mask, y, y_mask)
-                        #print "cost : ", cost
                         f_update(lrate)
 
                         if numpy.isnan(cost) or numpy.isinf(cost):
-                            print('bad cost detected: ', cost)
+                            print 'bad cost detected: ', cost
                             return 1., 1., 1.
 
                         if numpy.mod(uidx, dispFreq) == 0:
-                            print('Epoch ', eidx, 'Update ', uidx, 'Cost ', cost)
+                            print 'Epoch ', eidx, 'Update ', uidx, 'Cost ', cost
 
                         if saveto and numpy.mod(uidx, saveFreq) == 0:
-                            print('Saving...', end=' ')
+                            print 'Saving...',
 
                             if best_p is not None:
                                 params = best_p
@@ -738,56 +722,30 @@ def train_lstm(
                                 params = unzip(tparams)
                             numpy.savez(saveto, history_errs=history_errs, **params)
                             pkl.dump(model_options, open('%s.pkl' % saveto, 'wb'), -1)
-                            print('Done')
+                            print 'Done'
 
                         if numpy.mod(uidx, validFreq) == 0:
-                            print("Start Validating ...")
+                            fileres = open(ResFile, 'a')
+                            print "Start Validating ..."
                             use_noise.set_value(0.)
-                            train_err, correct, pp, num_windows = pred_error(f_pred, prepare_data, model_options, valid)
-                            print("final : ", train_err)
-                            print("total : ", num_windows)
-                            print("corrects   : ", correct[0])
-                            print("prediction : ", pp[0])
+                            train_err, correct, pp, num_windows, perplexity = pred_error(f_pred, f_pred_prob, prepare_data, model_options, valid)
+                            print "final : ", train_err
+                            print "total : ", num_windows
+                            print "corrects   : ", correct[0]
+                            print "prediction : ", pp[0]
+                            print "perplexity : ", perplexity
+                            fileres.write(str(perplexity) + '\n')
+                            fileres.close()
 
-                #-----------------
-                #     valid_err = pred_error(f_pred, prepare_data, valid,
-                #                            kf_valid)
-                #     test_err = pred_error(f_pred, prepare_data, test, kf_test)
-
-                #     history_errs.append([valid_err, test_err])
-
-                #     if (best_p is None or
-                #         valid_err <= numpy.array(history_errs)[:,
-                #                                                0].min()):
-
-                #         best_p = unzip(tparams)
-                #         bad_counter = 0
-
-                #     print ('Train ', train_err, 'Valid ', valid_err,
-                #            'Test ', test_err)
-
-                #     if (len(history_errs) > patience and
-                #         valid_err >= numpy.array(history_errs)[:-patience,
-                #                                                0].min()):
-                #         bad_counter += 1
-                #         if bad_counter > patience:
-                #             print 'Early Stop!'
-                #             estop = True
-                #             break
-
-            print('Seen %d samples' % n_samples)
+            print 'Seen %d samples' % n_samples
 
             if estop:
                 break
 
     except KeyboardInterrupt:
-        print("Training interupted")
+        print "Training interupted"
 
     end_time = time.time()
-    if best_p is not None:
-        zipp(best_p, tparams)
-    else:
-        best_p = unzip(tparams)
 
     use_noise.set_value(0.)
     kf_train_sorted = get_minibatches_idx(len(train[0]), batch_size)
@@ -795,55 +753,21 @@ def train_lstm(
     valid_err = pred_error(f_pred, prepare_data, valid, kf_valid)
     test_err = pred_error(f_pred, prepare_data, test, kf_test)
 
-    print('Train ', train_err, 'Valid ', valid_err, 'Test ', test_err)
+    print 'Train ', train_err, 'Valid ', valid_err, 'Test ', test_err
     if saveto:
         numpy.savez(saveto, train_err=train_err,
                     valid_err=valid_err, test_err=test_err,
                     history_errs=history_errs, **best_p)
-    print('The code run for %d epochs, with %f sec/epochs' % (
-        (eidx + 1), (end_time - start_time) / (1. * (eidx + 1))))
-    print(('Training took %.1fs' %
-                          (end_time - start_time)), file=sys.stderr)
+    print 'The code run for %d epochs, with %f sec/epochs' % (
+        (eidx + 1), (end_time - start_time) / (1. * (eidx + 1)))
+    print >> sys.stderr, ('Training took %.1fs' %
+                          (end_time - start_time))
     return train_err, valid_err, test_err
-
-
-def build_predictor(modelname):
-
-    model_options = OrderedDict()
-    model_options['dim_proj'] = 512
-    model_options['patience'] = 10
-    model_options['max_epochs'] = 5000
-    model_options['dispFreq'] = 10
-    model_options['decay_c'] = 0.
-    model_options['lrate'] = 0.002
-    model_options['n_words'] = 20000
-    model_options['encoder'] = 'lstm'
-    model_options['validFreq'] = 1000
-    model_options['saveFreq'] = 1000
-    model_options['maxlen'] = 100
-    model_options['batch_size'] = 16
-    model_options['valid_batch_size'] = 64
-    model_options['noise_std'] = 0.
-    model_options['use_dropout'] = True
-    model_options['reload_model'] = None
-    model_options['test_size'] = -1
-    model_options['ydim'] = 20000
-
-    params = OrderedDict()
-    params = init_params(model_options)
-    load_params(modelname, params)
-
-    tparams = init_tparams(params)
-
-    (use_noise, x, mask,
-     y, y_mask, f_pred_prob, f_pred, log_probs, f_u_shape) = build_model(tparams, model_options)
-
-    return f_pred
 
 
 if __name__ == '__main__':
     # See function train for all possible parameter and there definition.
     train_lstm(
-        max_epochs=100,
+        max_epochs=1000,
         test_size=500,
     )
